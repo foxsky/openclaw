@@ -1,0 +1,3 @@
+# Private native completion regressions reuse the existing suite-level Gateway.
+# Covers saved-alias independence, durable replay integrity and forged-source refusal.
+128
