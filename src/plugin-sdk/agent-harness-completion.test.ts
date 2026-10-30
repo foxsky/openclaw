@@ -43,7 +43,10 @@ vi.mock(
     }),
   }),
 );
-vi.mock("../agents/subagents/announce/subagent-announce-origin.js", () => ({
+vi.mock("../agents/subagents/announce/subagent-announce-origin.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../agents/subagents/announce/subagent-announce-origin.js")
+  >()),
   resolveAnnounceOrigin: () => ({ channel: "test", to: "requester" }),
 }));
 import * as completionSdk from "./agent-harness-completion.js";

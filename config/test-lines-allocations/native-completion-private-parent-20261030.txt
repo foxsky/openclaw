@@ -1,3 +1,4 @@
 # Private native completion regressions reuse the existing suite-level Gateway.
 # Covers saved-alias independence, durable replay integrity and forged-source refusal.
-128
+# Retired caller and restart refusal proofs preserve custody without treating cache as consumption.
+172

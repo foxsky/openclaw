@@ -3,6 +3,7 @@ import { expectDefined } from "@openclaw/normalization-core/expect";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred, withinTest } from "../../test/helpers/promise.js";
+import { createTestAdmittedRunContext } from "../agents/admitted-run-context.test-support.js";
 import type { agentCommand } from "../agents/agent-command.js";
 import { createAgentHarnessCompletionScope } from "../agents/agent-harness-completion-scope.js";
 import { buildAnnounceIdempotencyKey } from "../agents/announce-idempotency.js";
@@ -24,6 +25,7 @@ import { createResourceLoader } from "../agents/sessions/agent-session-loop-reso
 import { SessionManager } from "../agents/sessions/session-manager.js";
 import { loadSubagentRegistryFromSqlite } from "../agents/subagents/registry/subagent-registry-state.fixture.test-support.js";
 import { resumeSubagentRun } from "../agents/subagents/registry/subagent-registry.js";
+import { withGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-context.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import * as pendingInputs from "../config/sessions/session-accessor.pending-inputs.js";
 import { listSessionPendingInputs } from "../config/sessions/session-accessor.pending-inputs.js";
@@ -129,6 +131,15 @@ async function createCompletion(context: GatewayRequestContext, savedExternalRou
   }))!;
   client.internal = { operatorRunAuthority: source.authority };
   const root = tryBeginGatewayRootWorkAdmission("test:native-completion")!;
+  let callerRetired = false;
+  const caller = {
+    agentId: "main",
+    sessionKey: requesterSessionKey,
+    operationalRunInstance: createTestAdmittedRunContext(`native-parent-${id}`)
+      .operationalRunInstance,
+    receiptAuthority: () => !callerRetired,
+    gatewayContextResolver: context.resolveGatewayContext,
+  };
   let custody: AgentHarnessCompletionCustody | undefined;
   try {
     const retainedCustody = expectDefined(
@@ -140,7 +151,10 @@ async function createCompletion(context: GatewayRequestContext, savedExternalRou
             resolveGatewayContext: context.resolveGatewayContext,
             isWebchatConnect: () => false,
           },
-          () => captureAgentHarnessCompletionCustody(scope),
+          () =>
+            withGatewayToolCallerIdentity(caller, () =>
+              captureAgentHarnessCompletionCustody(scope),
+            ),
         ),
       ),
       "Expected native completion custody",
@@ -163,23 +177,26 @@ async function createCompletion(context: GatewayRequestContext, savedExternalRou
         }
       },
       deliver: (result = "Retained child result") =>
-        deliverAgentHarnessCompletion({
-          scope,
-          completionCustody: retainedCustody,
-          childSessionKey,
-          childSessionId: `child-${id}`,
-          announceId,
-          status: "succeeded",
-          result,
-          isSourceSessionAdmissionAllowed: () => retainedCustody.isCurrent(),
-        }),
+        withGatewayToolCallerIdentity(caller, () =>
+          deliverAgentHarnessCompletion({
+            scope,
+            completionCustody: retainedCustody,
+            childSessionKey,
+            childSessionId: `child-${id}`,
+            announceId,
+            status: "succeeded",
+            result,
+            isSourceSessionAdmissionAllowed: () => retainedCustody.isCurrent(),
+          }),
+        ),
       [Symbol.dispose]: () => retainedCustody.release(),
     };
   } catch (error) {
     custody?.release();
     throw error;
   } finally {
-    // End the original request; only retained completion custody owns the handoff.
+    // Monitor callbacks keep this retired caller context; only completion custody owns delivery.
+    callerRetired = true;
     source.release();
     root.release();
   }
